@@ -14,6 +14,9 @@ def rsi(series, period=14):
 
 def analyze_stock(ticker: str, period="2y"):
     df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+    # Fix yfinance sometimes returning MultiIndex columns on Streamlit Cloud
+if isinstance(df.columns, pd.MultiIndex):
+    df.columns = [c[0] for c in df.columns]
     if df.empty or len(df) < 250:
         return {"ticker": ticker, "error": "Not enough data to analyze."}
 
