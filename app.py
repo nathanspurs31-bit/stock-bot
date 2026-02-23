@@ -8,6 +8,13 @@ import pytz
 st.set_page_config(page_title="Stock Signal Bot", page_icon="📈", layout="centered")
 
 def rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+
 def vwap(df):
     tp = (df["High"] + df["Low"] + df["Close"]) / 3
     return (tp * df["Volume"]).cumsum() / df["Volume"].cumsum()
