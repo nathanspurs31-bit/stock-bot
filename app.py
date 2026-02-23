@@ -195,21 +195,3 @@ if run:
             c2.metric("OR Low", f"${orb['or_low']}")
 
             st.line_chart(orb["chart"])
-
-        st.write("Why:")
-        for r in result["reasons"]:
-            st.write(f"- {r}")
-
-            # Safe chart display (prevents Streamlit crash if columns missing)
-        # Safe chart display (prevents Streamlit crash if columns missing)
-        df_plot = result["df"].copy()
-
-        cols = []
-        for c in ["Close", "MA50", "MA200"]:
-            if c in df_plot.columns:
-                cols.append(c)
-
-        if len(cols) == 0:
-            st.warning("No chart data available.")
-        else:
-            st.line_chart(df_plot[cols].dropna())
