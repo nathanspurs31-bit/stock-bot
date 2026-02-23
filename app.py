@@ -109,7 +109,7 @@ if run:
         if c in df_plot.columns:
             cols.append(c)
     
-    if len(cols) == 0:
+if len(cols) == 0:
     st.warning("No chart data available.")
 else:
     st.line_chart(df_plot[cols].dropna())
