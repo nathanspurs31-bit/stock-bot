@@ -14,7 +14,7 @@ def rsi(series, period=14):
 
 def analyze_stock(ticker: str, period="2y"):
     df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
-    # Fix yfinance sometimes returning MultiIndex columns on Streamlit Cloud
+    
 if isinstance(df.columns, pd.MultiIndex):
     df.columns = [c[0] for c in df.columns]
     if df.empty or len(df) < 250:
@@ -96,5 +96,16 @@ if run:
         for r in result["reasons"]:
             st.write(f"- {r}")
 
-        chart_df = result["df"][["Close", "MA50", "MA200"]].dropna()
-        st.line_chart(chart_df)
+        # Safe chart display (prevents Streamlit crash if columns missing)
+df_plot = result["df"].copy()
+
+# Only use columns that exist
+cols = []
+for c in ["Close", "MA50", "MA200"]:
+    if c in df_plot.columns:
+        cols.append(c)
+
+if len(cols) == 0:
+    st.warning("No chart data available.")
+else:
+    st.line_chart(df_plot[cols].dropna())
