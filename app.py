@@ -8,6 +8,59 @@ import pytz
 st.set_page_config(page_title="Stock Signal Bot", page_icon="📈", layout="centered")
 
 def rsi(series, period=14):
+    def vwap(df):
+    tp = (df["High"] + df["Low"] + df["Close"]) / 3
+    return (tp * df["Volume"]).cumsum() / df["Volume"].cumsum()
+
+def get_intraday(ticker: str, interval="1m", period="5d"):
+    df = yf.download(ticker, interval=interval, period=period, auto_adjust=True, progress=False)
+    if df.empty:
+        return df
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0] for c in df.columns]
+    return df
+
+def orb_signal(ticker: str, orb_minutes=5):
+    df = get_intraday(ticker, interval="1m", period="5d")
+    if df.empty or len(df) < 30:
+        return {"error": "Not enough intraday data."}
+
+    eastern = pytz.timezone("US/Eastern")
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC").tz_convert(eastern)
+    else:
+        df.index = df.index.tz_convert(eastern)
+
+    today = df.index[-1].date()
+    session = df[df.index.date == today]
+    session = session.between_time("09:30", "16:00")
+
+    if session.empty:
+        return {"error": "No market session data yet."}
+
+    start = time(9, 30)
+    end = time(9, 35)
+    opening = session.between_time(start.strftime("%H:%M"), end.strftime("%H:%M"))
+
+    or_high = float(opening["High"].max())
+    or_low = float(opening["Low"].min())
+
+    last_price = float(session["Close"].iloc[-1])
+
+    signal = "WAIT"
+    if last_price > or_high:
+        signal = "LONG ORB"
+    elif last_price < or_low:
+        signal = "SHORT ORB"
+
+    return {
+        "ticker": ticker.upper(),
+        "last_price": round(last_price, 2),
+        "or_high": round(or_high, 2),
+        "or_low": round(or_low, 2),
+        "signal": signal,
+        "chart": session[["Close"]]
+    }
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
@@ -86,17 +139,55 @@ def analyze_stock(ticker: str, period="2y"):
 st.title("📈 Stock Signal Bot")
 
 ticker = st.text_input("Enter ticker", "AAPL")
+
+mode = st.selectbox("Mode", ["Swing (daily)", "Day Trade (ORB)"])
+
 run = st.button("Analyze")
 
 if run:
-    result = analyze_stock(ticker)
 
-    if "error" in result:
-        st.error(result["error"])
+    # ---------- SWING MODE ----------
+    if mode == "Swing (daily)":
+        result = analyze_stock(ticker)
+
+        if "error" in result:
+            st.error(result["error"])
+        else:
+            st.subheader(f"{result['badge']} {result['ticker']} — {result['decision']}")
+            st.metric("Score", result["score"])
+            st.metric("Price", f"${result['price']}")
+
+            st.write("Why:")
+            for r in result["reasons"]:
+                st.write(f"- {r}")
+
+            df_plot = result["df"].copy()
+
+            cols = []
+            for c in ["Close", "MA50", "MA200"]:
+                if c in df_plot.columns:
+                    cols.append(c)
+
+            if len(cols) == 0:
+                st.warning("No chart data available.")
+            else:
+                st.line_chart(df_plot[cols].dropna())
+
+    # ---------- DAY TRADE ORB MODE ----------
     else:
-        st.subheader(f"{result['badge']} {result['ticker']} — {result['decision']}")
-        st.metric("Score", result["score"])
-        st.metric("Price", f"${result['price']}")
+        orb = orb_signal(ticker)
+
+        if "error" in orb:
+            st.error(orb["error"])
+        else:
+            st.subheader(f"{orb['ticker']} — {orb['signal']}")
+            st.metric("Last Price", f"${orb['last_price']}")
+
+            c1, c2 = st.columns(2)
+            c1.metric("OR High", f"${orb['or_high']}")
+            c2.metric("OR Low", f"${orb['or_low']}")
+
+            st.line_chart(orb["chart"])
 
         st.write("Why:")
         for r in result["reasons"]:
