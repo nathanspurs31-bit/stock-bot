@@ -100,16 +100,16 @@ if run:
         for r in result["reasons"]:
             st.write(f"- {r}")
 
-        # Safe chart display (prevents Streamlit crash if columns missing)
-df_plot = result["df"].copy()
-
-# Only use columns that exist
-cols = []
-for c in ["Close", "MA50", "MA200"]:
-    if c in df_plot.columns:
-        cols.append(c)
-
-if len(cols) == 0:
+            # Safe chart display (prevents Streamlit crash if columns missing)
+    df_plot = result["df"].copy()
+    
+    # Only use columns that exist
+    cols = []
+    for c in ["Close", "MA50", "MA200"]:
+        if c in df_plot.columns:
+            cols.append(c)
+    
+    if len(cols) == 0:
     st.warning("No chart data available.")
 else:
     st.line_chart(df_plot[cols].dropna())
