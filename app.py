@@ -292,6 +292,126 @@ st.title("📈 Stock Signal Bot")
 ticker = st.text_input("Enter ticker", "AAPL")
 
 mode = st.selectbox("Mode", ["Swing (daily)", "Day Trade (ORB)", "Scanner (Top 25) — Hybrid Scalper (5m)"])
+@st.cache_data(ttl=60)
+def fetch_intraday_5m(ticker: str):
+    df = yf.download(ticker, interval="5m", period="5d", auto_adjust=True, progress=False)
+
+    if df is None or df.empty:
+        return df
+
+    # flatten MultiIndex if Yahoo returns it
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0] for c in df.columns]
+
+    return df
+
+
+def hybrid_scalper_signal(df: pd.DataFrame):
+    """
+    df: intraday dataframe (5m) with columns Open/High/Low/Close/Volume
+    returns: dict with ENTER/WATCH/AVOID + why
+    """
+    if df is None or df.empty or len(df) < 30:
+        return {"decision": "AVOID", "why": "Not enough intraday data.", "mom": 0, "vol": 0, "vwap": False}
+
+    d = df.copy()
+
+    # VWAP
+    tp = (d["High"] + d["Low"] + d["Close"]) / 3
+    d["VWAP"] = (tp * d["Volume"]).cumsum() / d["Volume"].cumsum()
+
+    last = float(d["Close"].iloc[-1])
+    prev1 = float(d["Close"].iloc[-2])
+    prev2 = float(d["Close"].iloc[-3])
+
+    # Momentum (0-2)
+    mom = 0
+    if last > prev1: mom += 1
+    if prev1 > prev2: mom += 1
+
+    # Volume spike (0/1)
+    vol_ma = d["Volume"].rolling(20).mean().iloc[-1]
+    last_vol = d["Volume"].iloc[-1]
+    vol_spike = 0
+    if pd.notna(vol_ma) and vol_ma > 0:
+        vol_spike = 1 if last_vol > vol_ma * 1.5 else 0
+
+    # Above VWAP
+    vwap_ok = last >= float(d["VWAP"].iloc[-1])
+
+    # Late / chasing filter (extended)
+    recent_high = d["High"].rolling(20).max().iloc[-1]
+    recent_low = d["Low"].rolling(20).min().iloc[-1]
+    rng = float(recent_high - recent_low) if pd.notna(recent_high) and pd.notna(recent_low) else 0.0
+    extended = False
+    if rng > 0:
+        extended = ((last - float(recent_low)) / rng) > 0.90
+
+    # Decision
+    if mom == 2 and vol_spike == 1 and vwap_ok and not extended:
+        return {"decision": "ENTER", "why": "Momentum up + volume spike + above VWAP (not extended).", "mom": mom, "vol": vol_spike, "vwap": vwap_ok}
+
+    if (mom >= 1 and vwap_ok) or (vol_spike == 1 and vwap_ok):
+        return {"decision": "WATCH", "why": "Setup forming (needs confirmation).", "mom": mom, "vol": vol_spike, "vwap": vwap_ok}
+
+    return {"decision": "AVOID", "why": "No clean setup right now.", "mom": mom, "vol": vol_spike, "vwap": vwap_ok}
+
+
+def scan_universe(tickers, top_n=25):
+    rows = []
+
+    for t in tickers:
+        t = t.strip().upper()
+        if not t:
+            continue
+
+        try:
+            df = fetch_intraday_5m(t)
+            if df is None or df.empty:
+                continue
+
+            last_close = float(df["Close"].iloc[-1])
+
+            # % move "today" in the 5m feed
+            idx_dates = pd.to_datetime(df.index).date
+            today = idx_dates[-1]
+            df_today = df[idx_dates == today]
+
+            if len(df_today) >= 2:
+                first_close = float(df_today["Close"].iloc[0])
+            else:
+                first_close = float(df["Close"].iloc[max(0, len(df) - 50)])
+
+            pct_move = ((last_close - first_close) / first_close) * 100 if first_close else 0.0
+
+            sig = hybrid_scalper_signal(df)
+
+            rows.append({
+                "Ticker": t,
+                "% Move": round(pct_move, 2),
+                "Decision": sig["decision"],
+                "Momentum(0-2)": sig["mom"],
+                "VolSpike(0/1)": sig["vol"],
+                "AboveVWAP": "YES" if sig["vwap"] else "NO",
+                "Last": round(last_close, 2),
+                "Why": sig["why"],
+            })
+
+            pytime.sleep(0.05)  # helps avoid rate-limits
+
+        except Exception:
+            continue
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+
+    # Sort ENTER first, then WATCH, then AVOID. Within each, biggest movers first.
+    rank = {"ENTER": 0, "WATCH": 1, "AVOID": 2}
+    out["__rank"] = out["Decision"].map(rank).fillna(9)
+    out = out.sort_values(["__rank", "% Move"], ascending=[True, False]).drop(columns="__rank")
+
+    return out.head(top_n)
 universe_text = ""
 if mode == "Scanner (Top 25) — Hybrid Scalper (5m)":
     universe_text = st.text_area(
