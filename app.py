@@ -448,9 +448,7 @@ if run:
                 st.warning("No chart data available.")
             else:
                 st.line_chart(df_plot[cols].dropna())
-
-    # ---------- DAY TRADE ORB MODE ----------
-    else:
+    elif mode == "Day Trade (ORB)":
         orb = orb_signal(ticker)
 
         if "error" in orb:
@@ -458,14 +456,12 @@ if run:
         else:
             st.subheader(f"{orb['ticker']} — {orb['signal']}")
             st.metric("Last Price", f"${orb['last_price']}")
-
             c1, c2 = st.columns(2)
             c1.metric("OR High", f"${orb['or_high']}")
             c2.metric("OR Low", f"${orb['or_low']}")
-
             st.line_chart(orb["chart"])
-            
-        elif mode == "Scanner (Top 25) — Hybrid Scalper (5m)":
+
+    elif mode == "Scanner (Top 25) — Hybrid Scalper (5m)":
         tickers = [x.strip() for x in universe_text.replace(",", "\n").splitlines() if x.strip()]
 
         if len(tickers) < 5:
