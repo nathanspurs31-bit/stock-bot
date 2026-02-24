@@ -69,7 +69,7 @@ def orb_signal(ticker: str, orb_minutes=5):
         "signal": signal,
         "chart": session[["Close"]]
     }
-    def hybrid_scalper_signal(df: pd.DataFrame):
+def hybrid_scalper_signal(df: pd.DataFrame):
     """
     df: intraday dataframe (1m or 5m) with columns: Open, High, Low, Close, Volume
     Returns: decision + scores for scalping/intraday
