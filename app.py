@@ -349,8 +349,14 @@ def hybrid_scalper_signal(df: pd.DataFrame):
 
     # Decision
     if mom == 2 and vol_spike == 1 and vwap_ok and not extended:
-        return {"decision": "ENTER", "why": "Momentum up + volume spike + above VWAP (not extended).", "mom": mom, "vol": vol_spike, "vwap": vwap_ok}
-
+        if mom == 2 and vol_spike == 1 and vwap_ok and not extended:
+    return {
+        "decision": "BUY NOW",
+        "why": "Momentum + volume spike + above VWAP breakout.",
+        "mom": mom,
+        "vol": vol_spike,
+        "vwap": vwap_ok
+    }
     if (mom >= 1 and vwap_ok) or (vol_spike == 1 and vwap_ok):
         return {"decision": "WATCH", "why": "Setup forming (needs confirmation).", "mom": mom, "vol": vol_spike, "vwap": vwap_ok}
 
@@ -407,7 +413,7 @@ def scan_universe(tickers, top_n=25):
         return out
 
     # Sort ENTER first, then WATCH, then AVOID. Within each, biggest movers first.
-    rank = {"ENTER": 0, "WATCH": 1, "AVOID": 2}
+    rank = {"BUY NOW": 0, "WATCH": 1, "AVOID": 2}
     out["__rank"] = out["Decision"].map(rank).fillna(9)
     out = out.sort_values(["__rank", "% Move"], ascending=[True, False]).drop(columns="__rank")
 
