@@ -464,7 +464,8 @@ if run:
             c2.metric("OR Low", f"${orb['or_low']}")
 
             st.line_chart(orb["chart"])
-                elif mode == "Scanner (Top 25) — Hybrid Scalper (5m)":
+            
+        elif mode == "Scanner (Top 25) — Hybrid Scalper (5m)":
         tickers = [x.strip() for x in universe_text.replace(",", "\n").splitlines() if x.strip()]
 
         if len(tickers) < 5:
