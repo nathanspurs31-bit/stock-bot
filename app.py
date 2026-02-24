@@ -348,13 +348,13 @@ def hybrid_scalper_signal(df: pd.DataFrame):
         extended = ((last - float(recent_low)) / rng) > 0.90
 
     # Decision
-    if mom == 2 and vol_spike == 1 and vwap_ok and not extended:
-    return {
-        "decision": "BUY NOW",
-        "why": "Momentum + volume spike + above VWAP breakout.",
-        "mom": mom,
-        "vol": vol_spike,
-        "vwap": vwap_ok
+        if mom == 2 and vol_spike == 1 and vwap_ok and not extended:
+            return {
+            "decision": "BUY NOW",
+            "why": "Momentum + volume spike + above VWAP breakout.",
+            "mom": mom,
+            "vol": vol_spike,
+            "vwap": vwap_ok
     }
     if (mom >= 1 and vwap_ok) or (vol_spike == 1 and vwap_ok):
         return {"decision": "WATCH", "why": "Setup forming (needs confirmation).", "mom": mom, "vol": vol_spike, "vwap": vwap_ok}
