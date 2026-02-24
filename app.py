@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, time
 import pytz
+import time as pytime
 
 st.set_page_config(page_title="Stock Signal Bot", page_icon="📈", layout="centered")
 
@@ -68,6 +69,149 @@ def orb_signal(ticker: str, orb_minutes=5):
         "signal": signal,
         "chart": session[["Close"]]
     }
+    def hybrid_scalper_signal(df: pd.DataFrame):
+    """
+    df: intraday dataframe (1m or 5m) with columns: Open, High, Low, Close, Volume
+    Returns: decision + scores for scalping/intraday
+    """
+    if df is None or df.empty or len(df) < 30:
+        return {"decision": "AVOID", "reason": "Not enough intraday data.", "momentum": 0, "vol": 0, "vwap_ok": False}
+
+    d = df.copy()
+
+    # VWAP
+    tp = (d["High"] + d["Low"] + d["Close"]) / 3
+    d["VWAP"] = (tp * d["Volume"]).cumsum() / d["Volume"].cumsum()
+
+    # Momentum score (simple + beginner-safe)
+    # We look at last 3 candles: higher closes = bullish momentum
+    last = d["Close"].iloc[-1]
+    c1 = d["Close"].iloc[-2]
+    c2 = d["Close"].iloc[-3]
+    momentum = 0
+    if last > c1: momentum += 1
+    if c1 > c2: momentum += 1
+
+    # Volume spike: last candle volume vs rolling average
+    vol_ma = d["Volume"].rolling(20).mean().iloc[-1]
+    last_vol = d["Volume"].iloc[-1]
+    vol_spike = 0
+    if pd.notna(vol_ma) and vol_ma > 0:
+        vol_spike = 1 if last_vol > vol_ma * 1.5 else 0
+
+    # VWAP condition
+    vwap_ok = last >= d["VWAP"].iloc[-1]
+
+    # “Late/chasing” filter: if price is extended above recent range, avoid
+    recent_high = d["High"].rolling(20).max().iloc[-1]
+    recent_low = d["Low"].rolling(20).min().iloc[-1]
+    rng = (recent_high - recent_low) if pd.notna(recent_high) and pd.notna(recent_low) else 0
+    extended = False
+    if rng and rng > 0:
+        extended = (last - recent_low) / rng > 0.90  # top 10% of recent range
+
+    # Decision logic (Hybrid)
+    # ENTER = momentum + volume spike + above VWAP + not extended
+    if momentum == 2 and vol_spike == 1 and vwap_ok and not extended:
+        return {
+            "decision": "ENTER",
+            "reason": "Momentum up + volume spike + above VWAP (not extended).",
+            "momentum": momentum,
+            "vol": vol_spike,
+            "vwap_ok": vwap_ok
+        }
+
+    # WATCH = some pieces are forming
+    if (momentum >= 1 and vwap_ok) or (vol_spike == 1 and vwap_ok):
+        return {
+            "decision": "WATCH",
+            "reason": "Setup forming (needs confirmation).",
+            "momentum": momentum,
+            "vol": vol_spike,
+            "vwap_ok": vwap_ok
+        }
+
+    return {
+        "decision": "AVOID",
+        "reason": "No clean momentum setup right now.",
+        "momentum": momentum,
+        "vol": vol_spike,
+        "vwap_ok": vwap_ok
+    }
+
+
+@st.cache_data(ttl=60)
+def fetch_intraday_5m(ticker: str):
+    # 5m candles, last ~5 days
+    df = yf.download(ticker, interval="5m", period="5d", auto_adjust=True, progress=False)
+
+    if df.empty:
+        return df
+
+    # Flatten MultiIndex if it appears
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0] for c in df.columns]
+
+    return df
+
+
+def scan_universe(tickers, top_n=25):
+    rows = []
+    for t in tickers:
+        t = t.strip().upper()
+        if not t:
+            continue
+
+        try:
+            df = fetch_intraday_5m(t)
+            if df is None or df.empty:
+                continue
+
+            # % move today (rough): last close vs first close of today in the 5m data
+            # If today isn't present yet, it still works but will be less meaningful.
+            last_close = float(df["Close"].iloc[-1])
+
+            # Try to isolate today's rows by date
+            dates = pd.to_datetime(df.index).date
+            today = dates[-1]
+            df_today = df[dates == today]
+            if len(df_today) >= 2:
+                first_close = float(df_today["Close"].iloc[0])
+            else:
+                first_close = float(df["Close"].iloc[max(0, len(df)-50)])  # fallback
+
+            pct_move = ((last_close - first_close) / first_close) * 100 if first_close else 0
+
+            sig = hybrid_scalper_signal(df)
+
+            rows.append({
+                "Ticker": t,
+                "% Move": round(pct_move, 2),
+                "Decision": sig["decision"],
+                "Momentum(0-2)": sig["momentum"],
+                "VolSpike(0/1)": sig["vol"],
+                "AboveVWAP": "YES" if sig["vwap_ok"] else "NO",
+                "Why": sig["reason"],
+                "Last": round(last_close, 2)
+            })
+
+            # tiny pause to reduce rate-limit risk
+            pytime.sleep(0.05)
+
+        except Exception:
+            continue
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+
+    # Sort by biggest movers first, then better decisions
+    decision_rank = {"ENTER": 0, "WATCH": 1, "AVOID": 2}
+    out["Rank"] = out["Decision"].map(decision_rank).fillna(9)
+    out = out.sort_values(by=["Rank", "% Move"], ascending=[True, False])
+    out = out.drop(columns=["Rank"])
+    return out.head(top_n)
+    
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
@@ -147,8 +291,13 @@ st.title("📈 Stock Signal Bot")
 
 ticker = st.text_input("Enter ticker", "AAPL")
 
-mode = st.selectbox("Mode", ["Swing (daily)", "Day Trade (ORB)"])
-
+mode = st.selectbox("Mode", ["Swing (daily)", "Day Trade (ORB)", "Scanner (Top 25) — Hybrid Scalper (5m)"])
+universe_text = ""
+if mode == "Scanner (Top 25) — Hybrid Scalper (5m)":
+    universe_text = st.text_area(
+        "Paste tickers to scan (one per line). Example: TSLA, NVDA, AMD, AAPL...",
+        height=200
+    )
 run = st.button("Analyze")
 
 if run:
@@ -195,3 +344,17 @@ if run:
             c2.metric("OR Low", f"${orb['or_low']}")
 
             st.line_chart(orb["chart"])
+                elif mode == "Scanner (Top 25) — Hybrid Scalper (5m)":
+        tickers = [x.strip() for x in universe_text.replace(",", "\n").splitlines() if x.strip()]
+
+        if len(tickers) < 5:
+            st.warning("Paste at least 5 tickers to scan.")
+        else:
+            with st.spinner(f"Scanning {len(tickers)} tickers..."):
+                table = scan_universe(tickers, top_n=25)
+
+            if table.empty:
+                st.error("No data returned. Try different tickers or try again during market hours.")
+            else:
+                st.subheader("Top 25 — Hybrid Scalper Signals (5m)")
+                st.dataframe(table, use_container_width=True)
